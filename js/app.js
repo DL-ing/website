@@ -1,10 +1,20 @@
 /* ============================================
-   "校帮递"校园跑腿代取服务平台 — 主逻辑 v2
+   "校帮递"校园跑腿代取服务平台 — 主逻辑 v2.1
    完整覆盖：用户中心/任务发布/任务大厅/订单管理/评价反馈
-   所有数据存储在 localStorage，纯前端，GitHub Pages 兼容
+
+   数据存储双模：
+     - 默认 localStorage（纯前端，GitHub Pages 可用）
+     - 若配置 SUPABASE_ANON_KEY，启动时探测 Supabase，在线时双写同步
    ============================================ */
 
-// ---------- 模拟数据 ----------
+// ★ Supabase 配置
+//   SUPABASE_URL:  项目地址 + /rest/v1
+//   SUPABASE_ANON_KEY: 从 Supabase Dashboard → Settings → API 获取 anon public key
+//   留空则纯前端 localStorage 运行
+const SUPABASE_URL = 'https://ethdxygvvdqnjqzsyjok.supabase.co/rest/v1';
+const SUPABASE_ANON_KEY = 'sb_publishable_eIqietFudirMZ7RSoqibWQ_Ek-0MN8F';
+
+// ---------- 配置数据（取件点/送达点列表，非模拟数据） ----------
 
 const PICKUP_POINTS = [
   '菜鸟驿站（东区）', '菜鸟驿站（西区）', '顺丰快递点',
@@ -18,57 +28,9 @@ const DELIVERY_POINTS = [
   '教学楼B区', '实验室楼', '操场', '校门口'
 ];
 
-const MOCK_USERS = [
-  { id:'u1',name:'陈静',  studentId:'P241012484',avatar:'陈',role:'both',phone:'138****5678' },
-  { id:'u2',name:'王金阳',studentId:'P241012497',avatar:'王',role:'both',phone:'139****1234' },
-  { id:'u3',name:'李金铭',studentId:'P241012469',avatar:'李',role:'both',phone:'136****9012' },
-  { id:'u4',name:'张明',  studentId:'P241012301',avatar:'张',role:'runner',phone:'137****3456' },
-  { id:'u5',name:'刘芳',  studentId:'P241012302',avatar:'刘',role:'runner',phone:'135****7890' },
-  { id:'u6',name:'赵强',  studentId:'P241012303',avatar:'赵',role:'runner',phone:'133****1111' },
-  { id:'u7',name:'孙雨',  studentId:'P241012304',avatar:'孙',role:'requester',phone:'132****2222' },
-  { id:'u8',name:'周杰',  studentId:'P241012305',avatar:'周',role:'requester',phone:'131****3333' },
-];
+// ---------- 当前用户（本地标识，后端接入后由登录接口返回） ----------
 
-const INITIAL_TASKS = [
-  { id:'t1',title:'菜鸟驿站代取快递（小件）',pickup:'菜鸟驿站（东区）',delivery:'宿舍1号楼',reward:3,time:'今天 18:00 前',notes:'取件码 3-2-5678，一个小盒子',publisherId:'u7',publisherName:'孙雨',status:'pending',accepterId:null,accepterName:null,createdAt:'2026-06-16 10:30',urgent:false },
-  { id:'t2',title:'帮忙取外卖（二食堂麻辣烫）',pickup:'二食堂',delivery:'宿舍3号楼',reward:2,time:'今天 12:00 左右',notes:'麻辣烫已经点好，直接去窗口拿就行',publisherId:'u8',publisherName:'周杰',status:'pending',accepterId:null,accepterName:null,createdAt:'2026-06-16 11:00',urgent:true },
-  { id:'t3',title:'顺丰快递代取（大件）',pickup:'顺丰快递点',delivery:'宿舍5号楼',reward:5,time:'今天 15:00-17:00',notes:'是一个大箱子，可能有点重',publisherId:'u7',publisherName:'孙雨',status:'accepted',accepterId:'u4',accepterName:'张明',createdAt:'2026-06-16 09:00',urgent:false },
-  { id:'t4',title:'图书馆还书代送',pickup:'宿舍2号楼',delivery:'图书馆',reward:2,time:'今天任意时间',notes:'两本书，在三楼还书处即可',publisherId:'u8',publisherName:'周杰',status:'pending',accepterId:null,accepterName:null,createdAt:'2026-06-16 08:20',urgent:false },
-  { id:'t5',title:'京东快递代取',pickup:'京东快递点',delivery:'宿舍4号楼',reward:3,time:'今天 14:00 前',notes:'取件码 JD-20260616-001',publisherId:'u7',publisherName:'孙雨',status:'delivering',accepterId:'u5',accepterName:'刘芳',createdAt:'2026-06-16 13:00',urgent:false },
-  { id:'t6',title:'一食堂带饭（盖浇饭）',pickup:'一食堂',delivery:'教学楼A区',reward:3,time:'今天 11:30',notes:'一份鱼香肉丝盖浇饭，不要辣',publisherId:'u8',publisherName:'周杰',status:'done',accepterId:'u6',accepterName:'赵强',createdAt:'2026-06-15 11:00',urgent:false },
-  { id:'t7',title:'菜鸟驿站取件（中件）',pickup:'菜鸟驿站（西区）',delivery:'宿舍6号楼',reward:4,time:'2026-06-17 上午',notes:'取件码 1-4-2234，预计中号箱子',publisherId:'u3',publisherName:'李金铭',status:'pending',accepterId:null,accepterName:null,createdAt:'2026-06-16 14:00',urgent:false },
-  { id:'t8',title:'校门口取外卖',pickup:'校门口',delivery:'宿舍1号楼',reward:2,time:'今天 18:30',notes:'校门口左手边外卖架，尾号888',publisherId:'u2',publisherName:'王金阳',status:'pending',accepterId:null,accepterName:null,createdAt:'2026-06-16 16:00',urgent:true },
-  { id:'t9',title:'三食堂代取晚餐',pickup:'三食堂',delivery:'宿舍4号楼',reward:3,time:'今天 17:30',notes:'一份黄焖鸡米饭+一杯奶茶',publisherId:'u1',publisherName:'陈静',status:'pending',accepterId:null,accepterName:null,createdAt:'2026-06-16 15:00',urgent:false },
-  { id:'t10',title:'菜鸟驿站代取（已接单-演示）',pickup:'菜鸟驿站（东区）',delivery:'宿舍2号楼',reward:3,time:'今天 16:00 前',notes:'取件码 2-3-1123，小包裹',publisherId:'u7',publisherName:'孙雨',status:'accepted',accepterId:'u1',accepterName:'陈静',createdAt:'2026-06-16 14:30',urgent:false },
-];
-
-const INITIAL_MESSAGES = {
-  't3':[
-    { from:'u4',fromName:'张明',text:'你好，我已经接单了，马上去取',time:'09:15' },
-    { from:'u7',fromName:'孙雨',text:'好的，麻烦你了！取件码是 SF-20260616-003',time:'09:16' },
-    { from:'u4',fromName:'张明',text:'收到，大概15分钟送到',time:'09:17' },
-  ],
-  't5':[
-    { from:'u5',fromName:'刘芳',text:'已取到快递，正在路上',time:'13:20' },
-    { from:'u7',fromName:'孙雨',text:'好的好的，我在宿舍楼下等你',time:'13:21' },
-  ],
-  't10':[
-    { from:'u7',fromName:'孙雨',text:'你好，麻烦帮忙取一下快递，谢谢！',time:'14:32' },
-    { from:'u1',fromName:'陈静',text:'好的，我正好顺路，马上就去取',time:'14:33' },
-    { from:'u7',fromName:'孙雨',text:'取件码是 2-3-1123，就在东区菜鸟驿站',time:'14:34' },
-  ],
-};
-
-const INITIAL_REVIEWS = [
-  { taskId:'t6',from:'u8',to:'u6',rating:5,comment:'赵强同学非常靠谱，准时送达！',time:'2026-06-15 12:00' },
-  { taskId:'t6',from:'u6',to:'u8',rating:5,comment:'沟通很顺畅，愉快的合作',time:'2026-06-15 12:05' },
-];
-
-const INITIAL_NOTIFICATIONS = [
-  { id:'n1',type:'status',taskId:'t10',text:'你接了孙雨发布的「菜鸟驿站代取」任务',time:'2026-06-16 14:33',read:false },
-  { id:'n2',type:'msg',taskId:'t10',text:'孙雨给你发送了一条新消息',time:'2026-06-16 14:34',read:false },
-  { id:'n3',type:'system',taskId:null,text:'欢迎使用"校帮递"校园跑腿代取平台！',time:'2026-06-16 08:00',read:true },
-];
+const DEFAULT_USER = { id:'u1',name:'陈静',studentId:'P241012484',avatar:'陈',role:'both',phone:'138****5678' };
 
 // ---------- 状态管理 ----------
 
@@ -86,15 +48,15 @@ const STATE = {
   userRoute: { pickup:'菜鸟驿站（东区）', delivery:'宿舍1号楼' },
 };
 
-function getCurrentUser() { return MOCK_USERS.find(u=>u.id===STATE.currentUserId)||MOCK_USERS[0]; }
+function getCurrentUser() { return DEFAULT_USER; }
 
 // ---------- 持久化 ----------
 
 function loadFromStorage() {
-  STATE.tasks = JSON.parse(localStorage.getItem('xbdt_tasks')||'null') || INITIAL_TASKS.map(t=>({...t}));
-  STATE.messages = JSON.parse(localStorage.getItem('xbdt_messages')||'null') || JSON.parse(JSON.stringify(INITIAL_MESSAGES));
-  STATE.reviews = JSON.parse(localStorage.getItem('xbdt_reviews')||'null') || INITIAL_REVIEWS.map(r=>({...r}));
-  STATE.notifications = JSON.parse(localStorage.getItem('xbdt_notifications')||'null') || INITIAL_NOTIFICATIONS.map(n=>({...n}));
+  STATE.tasks = JSON.parse(localStorage.getItem('xbdt_tasks')||'null') || [];
+  STATE.messages = JSON.parse(localStorage.getItem('xbdt_messages')||'null') || {};
+  STATE.reviews = JSON.parse(localStorage.getItem('xbdt_reviews')||'null') || [];
+  STATE.notifications = JSON.parse(localStorage.getItem('xbdt_notifications')||'null') || [];
   STATE.currentUserId = localStorage.getItem('xbdt_currentUser') || 'u1';
   STATE.userRoute = JSON.parse(localStorage.getItem('xbdt_route')||'null') || { pickup:'菜鸟驿站（东区）',delivery:'宿舍1号楼' };
 }
@@ -106,7 +68,10 @@ function saveAll() {
   localStorage.setItem('xbdt_notifications',JSON.stringify(STATE.notifications));
   localStorage.setItem('xbdt_currentUser',STATE.currentUserId);
   localStorage.setItem('xbdt_route',JSON.stringify(STATE.userRoute));
-}
+  // ★ 若 API 在线，异步同步关键数据
+  if (window.XbdtAPI && window.XbdtAPI.isOnline()) {
+    syncToAPI();
+  }}
 
 // ---------- 工具函数 ----------
 
@@ -192,10 +157,6 @@ function renderHall(){
     <div class="filter-bar" style="margin-bottom:12px;">
       <span class="filter-chip ${STATE.hallPickupFilter==='all'?'active':''}" onclick="setPickupFilter('all')">📍 全部地点</span>
       ${allPickups.map(p=>`<span class="filter-chip ${STATE.hallPickupFilter===p?'active':''}" onclick="setPickupFilter('${p}')">${p}</span>`).join('')}
-    </div>
-    <div class="switch-user-bar" style="margin-bottom:8px;">
-      <span style="font-size:11px;color:var(--text-muted);margin-right:4px;flex-shrink:0;">👥 演示切换：</span>
-      ${MOCK_USERS.map(u=>`<span class="switch-user-chip ${STATE.currentUserId===u.id?'active':''}" onclick="switchUser('${u.id}')">${u.avatar} ${u.name}</span>`).join('')}
     </div>
     <div id="hallTaskList">
       ${tasks.length===0?`<div class="empty-state"><div class="empty-icon">📋</div><p>暂时没有符合条件的任务</p><p style="font-size:12px;margin-top:4px;">试试切换筛选条件或发布新任务</p></div>`:tasks.map(t=>renderTaskCard(t)).join('')}
@@ -360,9 +321,9 @@ function renderUserCenter(){
     <div class="card">
       <div class="card-header"><span class="card-title">📝 我的评价</span></div>
       ${myReviews.length===0?'<p style="color:var(--text-muted);font-size:13px;">暂无评价，完成订单后双方可互评</p>':
-        myReviews.map(r=>{const rv=MOCK_USERS.find(u=>u.id===r.from); return`
+        myReviews.map(r=>{ return`
           <div style="padding:10px 0;border-bottom:1px solid var(--border);">
-            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:600;font-size:13px;">${rv?rv.name:'用户'}</span><div class="stars">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</div></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><span style="font-weight:600;font-size:13px;">用户 ${r.from}</span><div class="stars">${'★'.repeat(r.rating)}${'☆'.repeat(5-r.rating)}</div></div>
             <p style="font-size:13px;color:var(--text-secondary);margin-top:4px;">${r.comment}</p><span style="font-size:11px;color:var(--text-muted);">${r.time}</span>
           </div>`;}).join('')}
     </div>
@@ -560,10 +521,6 @@ function markAllNotifRead(){ STATE.notifications.forEach(n=>n.read=true); saveAl
 
 function submitFeedback(){ const input=document.getElementById('feedbackInput'); if(!input)return; const text=input.value.trim(); if(!text){showToast('请输入反馈内容','error');return;} input.value=''; showToast('感谢你的反馈！💡','success'); }
 
-// ---------- 切换用户（演示用） ----------
-
-function switchUser(userId){ STATE.currentUserId=userId; saveAll(); updateAll(); showToast(`已切换至：${getCurrentUser().name} 的视角 👤`,'success'); }
-
 // ---------- Tab 切换 ----------
 
 function switchTab(tab){
@@ -600,6 +557,40 @@ function bindEvents(){
   renderPublish();
 }
 
+// ---------- API 同步（后台静默，不阻塞 UI） ----------
+
+async function syncToAPI() {
+  const API = window.XbdtAPI;
+  if (!API || !API.isOnline()) return;
+  const uid = STATE.currentUserId;
+  // 这里仅做轻量推送：如有未同步的新任务/评价/通知，后续可扩展
+  // 当前版本保证 localStorage 为主，API 为辅
+  try {
+    await API.updateUserRoute(uid, STATE.userRoute.pickup, STATE.userRoute.delivery);
+  } catch (e) { /* 静默 */ }
+}
+
 // ---------- 启动 ----------
 
-document.addEventListener('DOMContentLoaded',()=>{ loadFromStorage(); renderAll(); bindEvents(); updateBadge(); });
+document.addEventListener('DOMContentLoaded', async () => {
+  loadFromStorage();
+
+  // ★ 初始化 Supabase API 层
+  if (typeof XbdtAPI !== 'undefined') {
+    XbdtAPI.init(SUPABASE_URL, SUPABASE_ANON_KEY);
+    if (SUPABASE_ANON_KEY) {
+      const online = await XbdtAPI.probe();
+      if (online) {
+        console.log('[校帮递] Supabase 已连接，拉取云端数据...');
+        await XbdtAPI.pullAll(STATE.currentUserId);
+        loadFromStorage();
+      } else {
+        console.log('[校帮递] Supabase 不可达，使用本地数据');
+      }
+    }
+  }
+
+  renderAll();
+  bindEvents();
+  updateBadge();
+});
