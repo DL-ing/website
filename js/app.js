@@ -1,16 +1,9 @@
 /* ============================================
-   "校帮递"校园跑腿代取服务平台 — 主逻辑 v2.1
-   完整覆盖：用户中心/任务发布/任务大厅/订单管理/评价反馈
-
-   数据存储双模：
-     - 默认 localStorage（纯前端，GitHub Pages 可用）
-     - 若配置 SUPABASE_ANON_KEY，启动时探测 Supabase，在线时双写同步
+   "校帮递"校园跑腿代取服务平台 — 主逻辑 v3.0
+   纯 Supabase 驱动，无 localStorage
    ============================================ */
 
 // ★ Supabase 配置
-//   SUPABASE_URL:  项目地址 + /rest/v1
-//   SUPABASE_ANON_KEY: 从 Supabase Dashboard → Settings → API 获取 anon public key
-//   留空则纯前端 localStorage 运行
 const SUPABASE_URL = 'https://ethdxygvvdqnjqzsyjok.supabase.co/rest/v1';
 const SUPABASE_ANON_KEY = 'sb_publishable_eIqietFudirMZ7RSoqibWQ_Ek-0MN8F';
 
@@ -50,28 +43,10 @@ const STATE = {
 
 function getCurrentUser() { return DEFAULT_USER; }
 
-// ---------- 持久化 ----------
+// ---------- 持久化（已废弃 localStorage，保留空函数兼容调用） ----------
 
-function loadFromStorage() {
-  STATE.tasks = JSON.parse(localStorage.getItem('xbdt_tasks')||'null') || [];
-  STATE.messages = JSON.parse(localStorage.getItem('xbdt_messages')||'null') || {};
-  STATE.reviews = JSON.parse(localStorage.getItem('xbdt_reviews')||'null') || [];
-  STATE.notifications = JSON.parse(localStorage.getItem('xbdt_notifications')||'null') || [];
-  STATE.currentUserId = localStorage.getItem('xbdt_currentUser') || 'u1';
-  STATE.userRoute = JSON.parse(localStorage.getItem('xbdt_route')||'null') || { pickup:'菜鸟驿站（东区）',delivery:'宿舍1号楼' };
-}
-
-function saveAll() {
-  localStorage.setItem('xbdt_tasks',JSON.stringify(STATE.tasks));
-  localStorage.setItem('xbdt_messages',JSON.stringify(STATE.messages));
-  localStorage.setItem('xbdt_reviews',JSON.stringify(STATE.reviews));
-  localStorage.setItem('xbdt_notifications',JSON.stringify(STATE.notifications));
-  localStorage.setItem('xbdt_currentUser',STATE.currentUserId);
-  localStorage.setItem('xbdt_route',JSON.stringify(STATE.userRoute));
-  // ★ 若 API 在线，异步同步关键数据
-  if (window.XbdtAPI && window.XbdtAPI.isOnline()) {
-    syncToAPI();
-  }}
+function loadFromStorage() { /* 数据由 API.pullAll 直接填充 STATE */ }
+function saveAll() { /* 所有写操作已通过 XbdtAPI 直连 Supabase */ }
 
 // ---------- 工具函数 ----------
 
@@ -81,8 +56,10 @@ function now(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth
 function timeStr(){ const d=new Date(); return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0'); }
 
 function addNotification(type,taskId,text){
-  STATE.notifications.unshift({ id:genId(),type,taskId,text,time:now(),read:false });
+  const notif={ id:genId(),type,taskId,text,time:now(),read:false,userId:STATE.currentUserId };
+  STATE.notifications.unshift(notif);
   saveAll(); updateBadge();
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.createNotification(notif);
 }
 
 // ---------- Toast ----------
@@ -172,7 +149,7 @@ function renderTaskCard(t){
   let actions='';
   if(canAccept) actions=`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();acceptTask('${t.id}')">🤝 一键接单</button>`;
   else if(t.status==='accepted'||t.status==='delivering') actions=`<span style="font-size:12px;color:var(--text-muted);">${t.publisherId===STATE.currentUserId?'我发布的':'已有人接单'}</span>`;
-  if(canCancel) actions+=` <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation();cancelTask('${t.id}')">取消</button>`;
+  if(canCancel) actions+=` <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation();cancelTask('${t.id}')">删除</button>`;
 
   return `
     <div class="task-card ${t.urgent?'urgent':''} ${isRouteMatch&&STATE.hallFilter!=='recommend'?'route-match':''}" onclick="showTaskDetail('${t.id}')">
@@ -227,6 +204,7 @@ function publishTask(){
   const nt={ id:genId(),title,pickup,delivery,reward,time,notes,publisherId:STATE.currentUserId,publisherName:getCurrentUser().name,status:'pending',accepterId:null,accepterName:null,createdAt:now(),urgent };
   STATE.tasks.unshift(nt); saveAll();
   addNotification('status',nt.id,`你的任务「${title}」已发布到任务大厅`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.createTask(nt);
   updateAll();
   ['pubTitle','pubTime','pubNotes'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
   const rw=document.getElementById('pubReward');if(rw)rw.value='3';
@@ -261,8 +239,8 @@ function renderOrderCard(t){
   const st=stMap[t.status]||stMap.pending;
 
   let actions='';
-  if(isPub&&t.status==='pending') actions=`<button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation();cancelTask('${t.id}')">❌ 取消任务</button>`;
-  else if(isPub&&t.status==='accepted') actions=`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();confirmDone('${t.id}')">✅ 确认完成</button> <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation();cancelTask('${t.id}')">取消</button>`;
+  if(isPub&&t.status==='pending') actions=`<button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation();cancelTask('${t.id}')">❌ 删除</button>`;
+  else if(isPub&&t.status==='accepted') actions=`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();confirmDone('${t.id}')">✅ 确认完成</button> <button class="btn btn-danger-outline btn-sm" onclick="event.stopPropagation();cancelTask('${t.id}')">删除</button>`;
   else if(!isPub&&t.status==='accepted') actions=`<button class="btn btn-primary btn-sm" onclick="event.stopPropagation();startDelivery('${t.id}')">🚀 开始配送</button>`;
   else if(!isPub&&t.status==='delivering') actions=`<button class="btn btn-success btn-sm" onclick="event.stopPropagation();markDelivered('${t.id}')">📬 确认送达</button>`;
   if(t.status==='done'){
@@ -393,32 +371,37 @@ function acceptTask(taskId){
   const t=getTask(taskId); if(!t||t.status!=='pending')return;
   t.status='accepted'; t.accepterId=STATE.currentUserId; t.accepterName=getCurrentUser().name;
   saveAll(); addNotification('status',taskId,`你接了${t.publisherName}发布的「${t.title}」`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.updateTask(taskId,{status:'accepted',accepterId:STATE.currentUserId,accepterName:getCurrentUser().name});
   updateAll(); showToast('接单成功！请及时完成任务 🤝','success');
 }
 
 function cancelTask(taskId){
   const t=getTask(taskId); if(!t)return;
-  if(!confirm(`确定要取消任务「${t.title}」吗？此操作不可撤销。`))return;
-  t.status='canceled'; saveAll(); addNotification('status',taskId,`任务「${t.title}」已被取消`);
-  updateAll(); showToast('任务已取消','success');
+  if(!confirm(`确定要删除任务「${t.title}」吗？此操作不可撤销。`))return;
+  STATE.tasks=STATE.tasks.filter(x=>x.id!==taskId);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.deleteTask(taskId);
+  updateAll(); showToast('任务已删除','success');
 }
 
 function confirmDone(taskId){
   if(!confirm('确认该任务已完成？'))return;
   const t=getTask(taskId); if(!t)return; t.status='done';
   saveAll(); addNotification('status',taskId,`任务「${t.title}」已完成，快去评价吧！`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.updateTask(taskId,{status:'done'});
   updateAll(); showToast('已确认完成！','success');
 }
 
 function startDelivery(taskId){
   const t=getTask(taskId); if(!t)return; t.status='delivering';
   saveAll(); addNotification('status',taskId,`你已开始配送「${t.title}」`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.updateTask(taskId,{status:'delivering'});
   updateAll(); showToast('已开始配送，请尽快送达 🚀','success');
 }
 
 function markDelivered(taskId){
   const t=getTask(taskId); if(!t)return; t.status='done';
   saveAll(); addNotification('status',taskId,`「${t.title}」已送达，等待需求方确认`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.updateTask(taskId,{status:'done'});
   updateAll(); showToast('已确认送达！✅','success');
 }
 
@@ -443,8 +426,10 @@ function pickStar(rating){ const el=document.getElementById('reviewRating'); if(
 function submitReview(taskId,targetId){
   const rating=parseInt(document.getElementById('reviewRating').value);
   const comment=document.getElementById('reviewComment').value.trim()||'用户未填写评价内容';
-  STATE.reviews.push({taskId,from:STATE.currentUserId,to:targetId,rating,comment,time:now()});
+  const review={taskId,from:STATE.currentUserId,to:targetId,rating,comment,time:now()};
+  STATE.reviews.push(review);
   saveAll(); addNotification('status',taskId,`${getCurrentUser().name}评价了你的服务：${rating}星`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.createReview(review);
   closeModal('reviewModal'); updateAll(); showToast('评价成功！⭐','success');
 }
 
@@ -483,8 +468,10 @@ function sendDetailChat(taskId){
   const input=document.getElementById('detailChatInput'); if(!input)return;
   const text=input.value.trim(); if(!text)return;
   if(!STATE.messages[taskId])STATE.messages[taskId]=[];
-  STATE.messages[taskId].push({from:STATE.currentUserId,fromName:getCurrentUser().name,text,time:timeStr()});
+  const msg={from:STATE.currentUserId,fromName:getCurrentUser().name,text,time:timeStr()};
+  STATE.messages[taskId].push(msg);
   saveAll(); addNotification('msg',taskId,`${getCurrentUser().name}给你发送了一条新消息`);
+  if(window.XbdtAPI&&window.XbdtAPI.isOnline()) XbdtAPI.sendMessage({task_id:taskId,from:STATE.currentUserId,fromName:getCurrentUser().name,text,time:msg.time});
   input.value='';
   const dc=document.getElementById('detailChatMsgs');
   if(dc){ const msgs=STATE.messages[taskId]||[]; dc.innerHTML=msgs.map(m=>`<div class="chat-msg ${m.from===STATE.currentUserId?'mine':'other'}"><div style="font-size:11px;font-weight:600;margin-bottom:2px;">${m.fromName}</div>${m.text}<div class="msg-time">${m.time}</div></div>`).join(''); dc.scrollTop=dc.scrollHeight; }
@@ -557,37 +544,24 @@ function bindEvents(){
   renderPublish();
 }
 
-// ---------- API 同步（后台静默，不阻塞 UI） ----------
-
-async function syncToAPI() {
-  const API = window.XbdtAPI;
-  if (!API || !API.isOnline()) return;
-  const uid = STATE.currentUserId;
-  // 这里仅做轻量推送：如有未同步的新任务/评价/通知，后续可扩展
-  // 当前版本保证 localStorage 为主，API 为辅
-  try {
-    await API.updateUserRoute(uid, STATE.userRoute.pickup, STATE.userRoute.delivery);
-  } catch (e) { /* 静默 */ }
-}
-
 // ---------- 启动 ----------
 
 document.addEventListener('DOMContentLoaded', async () => {
-  loadFromStorage();
+  // 初始化 Supabase
+  XbdtAPI.init(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const online = await XbdtAPI.probe();
 
-  // ★ 初始化 Supabase API 层
-  if (typeof XbdtAPI !== 'undefined') {
-    XbdtAPI.init(SUPABASE_URL, SUPABASE_ANON_KEY);
-    if (SUPABASE_ANON_KEY) {
-      const online = await XbdtAPI.probe();
-      if (online) {
-        console.log('[校帮递] Supabase 已连接，拉取云端数据...');
-        await XbdtAPI.pullAll(STATE.currentUserId);
-        loadFromStorage();
-      } else {
-        console.log('[校帮递] Supabase 不可达，使用本地数据');
-      }
-    }
+  if (online) {
+    console.log('[校帮递] Supabase 已连接，拉取数据...');
+    const data = await XbdtAPI.pullAll(STATE.currentUserId);
+    STATE.tasks = data.tasks;
+    STATE.messages = data.messages;
+    STATE.reviews = data.reviews;
+    STATE.notifications = data.notifications;
+    STATE.userRoute = data.route;
+  } else {
+    console.warn('[校帮递] Supabase 不可达，页面将显示为空');
+    STATE.tasks = []; STATE.messages = {}; STATE.reviews = []; STATE.notifications = [];
   }
 
   renderAll();
